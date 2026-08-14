@@ -29,15 +29,13 @@ public:
 	static class AFGCharacterPlayer* GetFGPlayer(class UWidget* widget);
 
 	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibsUtils")
-	static int getIndexFromName(const FString& name);
+	static int32 getIndexFromName(const FString& name);
 
-	static FString getEnumItemName(UEnum* MyEnum, int value);
-
-	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibsUtils")
-	static class AFGBuildableTrainPlatform* getNthTrainPlatform(class AFGBuildableRailroadStation* station, int index);
+	static FString getEnumItemName(UEnum* MyEnum, int32 value);
 
 	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibsUtils")
-	static void getTrainPlatformIndexes(class AFGBuildableTrainPlatform* trainPlatformCargo, TSet<int>& indexes, TSet<AFGBuildableRailroadStation*>& destinationStations);
+	static class AFGBuildableTrainPlatform* getNthTrainPlatform(class AFGBuildableRailroadStation* station, int32 index);
 
-	const static FRegexPattern indexPattern;
+	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibsUtils")
+	static void getTrainPlatformIndexes(class AFGBuildableTrainPlatform* trainPlatformCargo, TSet<int32>& indexes, TSet<AFGBuildableRailroadStation*>& destinationStations);
 };

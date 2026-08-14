@@ -1,6 +1,8 @@
 ﻿#pragma once
 
+#include "CoreMinimal.h"
 #include "Logging/LogMacros.h"
+#include "Util/MarcioCommonLibsConfiguration.h"
 
 #include <sstream>
 
@@ -59,29 +61,31 @@ DECLARE_LOG_CATEGORY_EXTERN(LogMarcioCommonLibs, Log, All)
 
 #if PLATFORM_LINUX
 #define MCL_LOG_Verbosity(verbosity, first, ...) \
-	{ \
+	do { \
 		CommaLog l; \
-		l, first, ##__VA_ARGS__; \
-		const auto AnsiStr = StringCast<ANSICHAR>(l.wos.str().c_str()); \
-		UE_LOG(LogMarcioCommonLibs, verbosity, TEXT("%hs"), AnsiStr.Get()) \
-	}
+		l, first __VA_OPT__(,) __VA_ARGS__; \
+		const auto Message = l.wos.str(); \
+		const auto AnsiStr = StringCast<ANSICHAR>(Message.c_str()); \
+		UE_LOG(LogMarcioCommonLibs, verbosity, TEXT("%hs"), AnsiStr.Get()); \
+	} while (false)
 #else
 #define MCL_LOG_Verbosity(verbosity, first, ...) \
-	{ \
+	do { \
 		CommaLog l; \
-		l, first, ##__VA_ARGS__; \
-		UE_LOG(LogMarcioCommonLibs, verbosity, TEXT("%s"), l.wos.str().c_str()) \
-	}
+		l, first __VA_OPT__(,) __VA_ARGS__; \
+		const auto Message = l.wos.str(); \
+		UE_LOG(LogMarcioCommonLibs, verbosity, TEXT("%s"), Message.c_str()); \
+	} while (false)
 #endif
 
-#define MCL_LOG_Log(first, ...) MCL_LOG_Verbosity(Log, first, ##__VA_ARGS__)
-#define MCL_LOG_Display(first, ...) MCL_LOG_Verbosity(Display, first, ##__VA_ARGS__)
-#define MCL_LOG_Warning(first, ...) MCL_LOG_Verbosity(Warning, first, ##__VA_ARGS__)
-#define MCL_LOG_Error(first, ...) MCL_LOG_Verbosity(Error, first, ##__VA_ARGS__)
+#define MCL_LOG_Log(first, ...) MCL_LOG_Verbosity(Log, first __VA_OPT__(,) __VA_ARGS__)
+#define MCL_LOG_Display(first, ...) MCL_LOG_Verbosity(Display, first __VA_OPT__(,) __VA_ARGS__)
+#define MCL_LOG_Warning(first, ...) MCL_LOG_Verbosity(Warning, first __VA_OPT__(,) __VA_ARGS__)
+#define MCL_LOG_Error(first, ...) MCL_LOG_Verbosity(Error, first __VA_OPT__(,) __VA_ARGS__)
 
-#define IS_MCL_LOG_LEVEL(level) (UMarcioCommonLibsConfiguration::configuration.logLevel > 0 && UMarcioCommonLibsConfiguration::configuration.logLevel >= static_cast<uint8>(level))
+#define IS_MCL_LOG_LEVEL(level) (UMarcioCommonLibsConfiguration::GetLogLevelMCL() > 0 && UMarcioCommonLibsConfiguration::GetLogLevelMCL() >= static_cast<int32>(level))
 
-#define MCL_LOG_Log_Condition(first, ...) if(IS_MCL_LOG_LEVEL(ELogVerbosity::Log)) MCL_LOG_Log(first, ##__VA_ARGS__)
-#define MCL_LOG_Display_Condition(first, ...) if(IS_MCL_LOG_LEVEL(ELogVerbosity::Display)) MCL_LOG_Display(first, ##__VA_ARGS__)
-#define MCL_LOG_Warning_Condition(first, ...) if(IS_MCL_LOG_LEVEL(ELogVerbosity::Warning)) MCL_LOG_Warning(first, ##__VA_ARGS__)
-#define MCL_LOG_Error_Condition(first, ...) if(IS_MCL_LOG_LEVEL(ELogVerbosity::Error)) MCL_LOG_Error(first, ##__VA_ARGS__)
+#define MCL_LOG_Log_Condition(first, ...) do { if (IS_MCL_LOG_LEVEL(ELogVerbosity::Log)) { MCL_LOG_Log(first __VA_OPT__(,) __VA_ARGS__); } } while (false)
+#define MCL_LOG_Display_Condition(first, ...) do { if (IS_MCL_LOG_LEVEL(ELogVerbosity::Display)) { MCL_LOG_Display(first __VA_OPT__(,) __VA_ARGS__); } } while (false)
+#define MCL_LOG_Warning_Condition(first, ...) do { if (IS_MCL_LOG_LEVEL(ELogVerbosity::Warning)) { MCL_LOG_Warning(first __VA_OPT__(,) __VA_ARGS__); } } while (false)
+#define MCL_LOG_Error_Condition(first, ...) do { if (IS_MCL_LOG_LEVEL(ELogVerbosity::Error)) { MCL_LOG_Error(first __VA_OPT__(,) __VA_ARGS__); } } while (false)

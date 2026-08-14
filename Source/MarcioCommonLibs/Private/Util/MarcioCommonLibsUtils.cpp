@@ -1,6 +1,5 @@
 ﻿#include "Util/MarcioCommonLibsUtils.h"
 
-#include "AkAudioEvent.h"
 #include "Animation/AimOffsetBlendSpace.h"
 #include "Animation/AnimSequence.h"
 #include "AbstractInstanceManager.h"
@@ -15,20 +14,24 @@
 #include "Buildables/FGBuildableTrainPlatformCargo.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Engine/SkinnedAssetCommon.h"
+#include "Engine/World.h"
+#include "GameFramework/PlayerController.h"
 #include "HAL/PlatformFileManager.h"
+#include "Internationalization/Regex.h"
 #include "Misc/FileHelper.h"
+#include "Misc/ScopeLock.h"
+#include "Misc/StringBuilder.h"
 #include "Util/MarcioCommonLibsConfiguration.h"
 #include "Util/MCLLogging.h"
 #include "Reflection/BlueprintReflectionLibrary.h"
 #include "Resources/FGEquipmentDescriptor.h"
 #include "Components/WidgetComponent.h"
 #include "Engine/SkeletalMesh.h"
+#include "UObject/UnrealType.h"
 
 #ifndef OPTIMIZE
-#pragma optimize("", off)
+UE_DISABLE_OPTIMIZATION_SHIP
 #endif
-
-const FRegexPattern UMarcioCommonLibsUtils::indexPattern(TEXT("(\\d+)$"));
 
 void UMarcioCommonLibsUtils::DumpUnknownClass
 (
@@ -39,6 +42,15 @@ void UMarcioCommonLibsUtils::DumpUnknownClass
 	bool includeDateTime
 )
 {
+	if (!IsValid(obj))
+	{
+		MCL_LOG_Warning(TEXT("DumpUnknownClass called with an invalid object"));
+		return;
+	}
+
+	static FCriticalSection DumpCriticalSection;
+	FScopeLock DumpLock(&DumpCriticalSection);
+
 	auto& platformFile = FPlatformFileManager::Get().GetPlatformFile();
 
 	auto dumpFolder = FPaths::Combine(FPaths::ProjectDir(), TEXT("DumpedObjects"));
@@ -53,7 +65,7 @@ void UMarcioCommonLibsUtils::DumpUnknownClass
 
 		TArray<FString> foundFiles;
 
-		platformFile.FindFiles(foundFiles, *dumpFolder, TEXT("txt"));
+		platformFile.FindFiles(foundFiles, *dumpFolder, TEXT(".txt"));
 
 		for (auto file : foundFiles)
 		{
@@ -259,22 +271,7 @@ void UMarcioCommonLibsUtils::DumpUnknownClass
 			}
 			else
 			{
-				UObject* objValue = nullptr;
-
-				if (objectProperty->GetName() == TEXT("Prop1"))
-				{
-					auto actorPtr = objectProperty->ContainerPtrToValuePtr<UObject*>(obj);
-					if (actorPtr)
-					{
-						objValue = *actorPtr;
-					}
-				}
-				else if (objectProperty->GetName() == TEXT("Prop1"))
-				{
-					objValue = objectProperty->ContainerPtrToValuePtr<UObject>(obj);
-				}
-
-				objValue = GetValid(objValue);
+				UObject* objValue = GetValid(objectProperty->GetObjectPropertyValue_InContainer(obj));
 
 				if (objValue)
 				{
@@ -376,8 +373,10 @@ class AActor* UMarcioCommonLibsUtils::GetHitActor(const FHitResult& hit)
 	if (abstractInstanceManger)
 	{
 		FInstanceHandle handle;
-		abstractInstanceManger->ResolveHit(hit, handle);
-		actor = AAbstractInstanceManager::GetOwnerByHandle(handle);
+		if (abstractInstanceManger->ResolveHit(hit, handle))
+		{
+			actor = AAbstractInstanceManager::GetOwnerByHandle(handle);
+		}
 	}
 
 	return actor;
@@ -385,24 +384,27 @@ class AActor* UMarcioCommonLibsUtils::GetHitActor(const FHitResult& hit)
 
 void UMarcioCommonLibsUtils::DumpInformation(AActor* worldContext, TSubclassOf<UFGEquipmentDescriptor> itemDescriptorClass)
 {
+	if (!IsValid(worldContext) || !itemDescriptorClass)
+	{
+		return;
+	}
+
+	UWorld* World = worldContext->GetWorld();
+	if (!IsValid(World))
+	{
+		return;
+	}
+
 	// if (configuration.dumpConnections)
 	{
-		if (!itemDescriptorClass)
-		{
-			return;
-		}
-
 		auto className = GetFullNameSafe(itemDescriptorClass);
 
 		MCL_LOG_Display(TEXT("Dumping "), *className);
 
-		if (itemDescriptorClass)
-		{
-			MCL_LOG_Display(TEXT("    Equipment small icon = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetSmallIcon(itemDescriptorClass)));
-			MCL_LOG_Display(TEXT("    Equipment big icon = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetBigIcon(itemDescriptorClass)));
-			MCL_LOG_Display(TEXT("    Equipment conveyor mesh = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetItemMesh(itemDescriptorClass)));
-			MCL_LOG_Display(TEXT("    Equipment category = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetCategory(itemDescriptorClass)));
-		}
+		MCL_LOG_Display(TEXT("    Equipment small icon = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetSmallIcon(itemDescriptorClass)));
+		MCL_LOG_Display(TEXT("    Equipment big icon = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetBigIcon(itemDescriptorClass)));
+		MCL_LOG_Display(TEXT("    Equipment conveyor mesh = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetItemMesh(itemDescriptorClass)));
+		MCL_LOG_Display(TEXT("    Equipment category = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetCategory(itemDescriptorClass)));
 
 		auto equipmentDescriptorClass = TSubclassOf<UFGEquipmentDescriptor>(itemDescriptorClass);
 		if (!equipmentDescriptorClass)
@@ -412,27 +414,27 @@ void UMarcioCommonLibsUtils::DumpInformation(AActor* worldContext, TSubclassOf<U
 			return;
 		}
 
-		MCL_LOG_Display(TEXT("    Equipment stack size = "), *getEnumItemName(StaticEnum<EStackSize>(), (int)UFGEquipmentDescriptor::GetStackSize(equipmentDescriptorClass)));
+		MCL_LOG_Display(TEXT("    Equipment stack size = "), *getEnumItemName(StaticEnum<EStackSize>(), static_cast<int32>(UFGEquipmentDescriptor::GetStackSize(equipmentDescriptorClass))));
 
-		MCL_LOG_Display(TEXT("    Equipment class = "), *GetPathNameSafe(UFGEquipmentDescriptor::GetEquipmentClass(equipmentDescriptorClass)));
+		const TSubclassOf<AFGEquipment> EquipmentClass = UFGEquipmentDescriptor::GetEquipmentClass(equipmentDescriptorClass);
+		MCL_LOG_Display(TEXT("    Equipment class = "), *GetPathNameSafe(EquipmentClass.Get()));
 
-		if (!UFGEquipmentDescriptor::GetEquipmentClass(equipmentDescriptorClass))
+		if (!EquipmentClass)
 		{
 			return;
 		}
 
-		// auto equipment = Cast<AFGEquipment>(equipmentDescriptor->mEquipmentClass->GetDefaultObject());
+		AFGEquipment* equipment = World->SpawnActor<AFGEquipment>(EquipmentClass.Get());
+		if (!IsValid(equipment))
+		{
+			MCL_LOG_Warning(TEXT("Unable to spawn equipment for "), *className);
+			return;
+		}
 
-		auto equipment = Cast<AFGEquipment>(
-			worldContext->GetWorld()->SpawnActor(
-				UFGEquipmentDescriptor::GetEquipmentClass(equipmentDescriptorClass)
-				)
-			);
-
-		MCL_LOG_Display(TEXT("    Equipment slot = "), *getEnumItemName(StaticEnum<EEquipmentSlot>(), (int)equipment->mEquipmentSlot));
-		MCL_LOG_Display(TEXT("    Equipment attachment socket = "), *equipment->mAttachSocket.ToString());
-		MCL_LOG_Display(TEXT("    Equipment arm animation = "), *getEnumItemName(StaticEnum<EArmEquipment>(), (int)equipment->GetArmsAnimation()));
-		MCL_LOG_Display(TEXT("    Equipment back animation = "), *getEnumItemName(StaticEnum<EBackEquipment>(), (int)equipment->GetBackAnimation()));
+		MCL_LOG_Display(TEXT("    Equipment slot = "), *getEnumItemName(StaticEnum<EEquipmentSlot>(), static_cast<int32>(equipment->mEquipmentSlot)));
+		//MCL_LOG_Display(TEXT("    Equipment attachment socket = "), *equipment->mAttachSocket.ToString());
+		MCL_LOG_Display(TEXT("    Equipment arm animation = "), *getEnumItemName(StaticEnum<EArmEquipment>(), static_cast<int32>(equipment->GetArmsAnimation())));
+		MCL_LOG_Display(TEXT("    Equipment back animation = "), *getEnumItemName(StaticEnum<EBackEquipment>(), static_cast<int32>(equipment->GetBackAnimation())));
 		MCL_LOG_Display(TEXT("    Equipment idle pose animation = "), *GetPathNameSafe(equipment->GetIdlePoseAnimation()));
 		MCL_LOG_Display(TEXT("    Equipment idle pose animation 3p = "), *GetPathNameSafe(equipment->GetIdlePoseAnimation3p()));
 		MCL_LOG_Display(TEXT("    Equipment crouch pose animation 3p = "), *GetPathNameSafe(equipment->GetCrouchPoseAnimation3p()));
@@ -452,6 +454,11 @@ void UMarcioCommonLibsUtils::DumpInformation(AActor* worldContext, TSubclassOf<U
 
 		for (auto component : components)
 		{
+			if (!IsValid(component))
+			{
+				continue;
+			}
+
 			MCL_LOG_Display(TEXT("    Component Class = "), *GetFullNameSafe(component->GetClass()));
 
 			if (auto scene = Cast<USceneComponent>(component))
@@ -475,13 +482,16 @@ void UMarcioCommonLibsUtils::DumpInformation(AActor* worldContext, TSubclassOf<U
 				MCL_LOG_Display(TEXT("        Pause Anims = "), skeletalMesh->bPauseAnims ? TEXT("true") : TEXT("false"));
 				MCL_LOG_Display(TEXT("        Use Ref Pose On Init Anim = "), skeletalMesh->bUseRefPoseOnInitAnim ? TEXT("true") : TEXT("false"));
 				MCL_LOG_Display(TEXT("        Skeletal Mesh = "), *GetPathNameSafe(skeletalMesh->GetSkinnedAsset()));
-				DumpUnknownClass(
-					skeletalMesh->GetSkinnedAsset(),
-					TEXT("        "),
-					GetNameSafe(itemDescriptorClass) + TEXT("-"),
-					TEXT("-") + component->GetName(),
-					false
-					);
+				if (USkinnedAsset* SkinnedAsset = skeletalMesh->GetSkinnedAsset())
+				{
+					DumpUnknownClass(
+						SkinnedAsset,
+						TEXT("        "),
+						GetNameSafe(itemDescriptorClass) + TEXT("-"),
+						TEXT("-") + component->GetName(),
+						false
+						);
+				}
 				MCL_LOG_Display(TEXT("        Position = "), skeletalMesh->GetPosition());
 			}
 
@@ -503,32 +513,38 @@ void UMarcioCommonLibsUtils::DumpInformation(AActor* worldContext, TSubclassOf<U
 
 AFGCharacterPlayer* UMarcioCommonLibsUtils::GetFGPlayer(UWidget* widget)
 {
-	auto owningPlayer = widget->GetOwningPlayer();
+	if (!IsValid(widget))
+	{
+		return nullptr;
+	}
 
-	auto pawn = owningPlayer->K2_GetPawn();
+	APlayerController* owningPlayer = widget->GetOwningPlayer();
+	if (!IsValid(owningPlayer))
+	{
+		return nullptr;
+	}
 
-	return Cast<AFGCharacterPlayer>(pawn);
+	return Cast<AFGCharacterPlayer>(owningPlayer->K2_GetPawn());
 }
 
-int UMarcioCommonLibsUtils::getIndexFromName(const FString& name)
+int32 UMarcioCommonLibsUtils::getIndexFromName(const FString& name)
 {
-	FRegexMatcher m(indexPattern, name);
+	static const FRegexPattern IndexPattern(TEXT("(\\d+)$"));
+	FRegexMatcher m(IndexPattern, name);
 	if (m.FindNext())
 	{
 		return FCString::Atoi(*m.GetCaptureGroup(1));
 	}
 
-	return -1;
+	return INDEX_NONE;
 }
 
-FString UMarcioCommonLibsUtils::getEnumItemName(UEnum* MyEnum, int value)
+FString UMarcioCommonLibsUtils::getEnumItemName(UEnum* MyEnum, int32 value)
 {
 	FString valueStr;
 
 	if (MyEnum)
 	{
-		MyEnum->AddToRoot();
-
 		valueStr = MyEnum->GetDisplayNameTextByValue(value).ToString();
 	}
 	else
@@ -539,71 +555,96 @@ FString UMarcioCommonLibsUtils::getEnumItemName(UEnum* MyEnum, int value)
 	return FString::Printf(TEXT("%s (%d)"), *valueStr, value);
 }
 
-AFGBuildableTrainPlatform* UMarcioCommonLibsUtils::getNthTrainPlatform(AFGBuildableRailroadStation* station, int index)
+AFGBuildableTrainPlatform* UMarcioCommonLibsUtils::getNthTrainPlatform(AFGBuildableRailroadStation* station, int32 index)
 {
-	for (auto i = 0; i <= 1; i++)
+	if (!IsValid(station) || index == 0)
 	{
-		auto offsetDistance = 1;
+		return nullptr;
+	}
+
+	for (int32 DirectionIndex = 0; DirectionIndex <= 1; ++DirectionIndex)
+	{
+		int32 offsetDistance = 1;
 
 		TSet<AFGBuildableTrainPlatform*> seenPlatforms;
 
-		auto platformConnection = station->GetStationOutputConnection();
-		if (i)
+		UFGTrainPlatformConnection* platformConnection = station->GetStationOutputConnection();
+		if (!IsValid(platformConnection))
+		{
+			continue;
+		}
+
+		if (DirectionIndex)
 		{
 			platformConnection = station->GetConnectionInOppositeDirection(platformConnection);
 		}
 
-		for (platformConnection = platformConnection->GetConnectedTo();
-		     platformConnection;
-		     platformConnection = platformConnection->GetPlatformOwner()->GetConnectionInOppositeDirection(platformConnection)->GetConnectedTo(),
-		     ++offsetDistance)
+		if (!IsValid(platformConnection))
 		{
-			auto connectedPlatform = platformConnection->GetPlatformOwner();
+			continue;
+		}
 
-			if (seenPlatforms.Contains(connectedPlatform))
+		platformConnection = platformConnection->GetConnectedTo();
+		while (IsValid(platformConnection))
+		{
+			AFGBuildableTrainPlatform* connectedPlatform = platformConnection->GetPlatformOwner();
+
+			if (!IsValid(connectedPlatform) || seenPlatforms.Contains(connectedPlatform))
 			{
-				// Loop detected
 				break;
 			}
 
 			seenPlatforms.Add(connectedPlatform);
 
-			auto adjustedOffsetDistance = i ? -offsetDistance : offsetDistance;
+			const int32 adjustedOffsetDistance = DirectionIndex ? -offsetDistance : offsetDistance;
 
-			if (index != adjustedOffsetDistance)
+			if (index == adjustedOffsetDistance)
 			{
-				// Not on a valid offset. Skip
-				continue;
+				return connectedPlatform;
 			}
 
-			return connectedPlatform;
+			UFGTrainPlatformConnection* OppositeConnection = connectedPlatform->GetConnectionInOppositeDirection(platformConnection);
+			platformConnection = IsValid(OppositeConnection) ? OppositeConnection->GetConnectedTo() : nullptr;
+			++offsetDistance;
 		}
 	}
 
 	return nullptr;
 }
 
-void UMarcioCommonLibsUtils::getTrainPlatformIndexes(AFGBuildableTrainPlatform* trainPlatformCargo, TSet<int>& indexes, TSet<AFGBuildableRailroadStation*>& destinationStations)
+void UMarcioCommonLibsUtils::getTrainPlatformIndexes(AFGBuildableTrainPlatform* trainPlatformCargo, TSet<int32>& indexes, TSet<AFGBuildableRailroadStation*>& destinationStations)
 {
-	for (auto i = 0; i <= 1; i++)
+	if (!IsValid(trainPlatformCargo))
 	{
-		auto offsetDistance = 1;
+		return;
+	}
+
+	TInlineComponentArray<UFGTrainPlatformConnection*> railComponents;
+	trainPlatformCargo->GetComponents(railComponents);
+	if (railComponents.Num() < 2)
+	{
+		return;
+	}
+
+	for (int32 DirectionIndex = 0; DirectionIndex <= 1; ++DirectionIndex)
+	{
+		int32 offsetDistance = 1;
 
 		TSet<AFGBuildableTrainPlatform*> seenPlatforms;
 
-		TInlineComponentArray<UFGTrainPlatformConnection*> railComponents;
-		trainPlatformCargo->GetComponents(railComponents);
-
-		for (auto platformConnection = railComponents[i]->GetConnectedTo();
-		     platformConnection;
-		     platformConnection = platformConnection->GetPlatformOwner()->GetConnectionInOppositeDirection(platformConnection)->GetConnectedTo(),
-		     ++offsetDistance)
+		UFGTrainPlatformConnection* InitialConnection = railComponents[DirectionIndex];
+		if (!IsValid(InitialConnection))
 		{
-			auto connectedPlatform = platformConnection->GetPlatformOwner();
+			continue;
+		}
 
-			if (seenPlatforms.Contains(connectedPlatform))
+		UFGTrainPlatformConnection* platformConnection = InitialConnection->GetConnectedTo();
+		while (IsValid(platformConnection))
+		{
+			AFGBuildableTrainPlatform* connectedPlatform = platformConnection->GetPlatformOwner();
+
+			if (!IsValid(connectedPlatform) || seenPlatforms.Contains(connectedPlatform))
 			{
-				// Loop detected
 				break;
 			}
 
@@ -612,20 +653,22 @@ void UMarcioCommonLibsUtils::getTrainPlatformIndexes(AFGBuildableTrainPlatform* 
 			MCL_LOG_Display_Condition(
 				*connectedPlatform->GetName(),
 				TEXT(" direction = "),
-				i,
+				DirectionIndex,
 				TEXT(" / orientation reversed = "),
 				connectedPlatform->IsOrientationReversed() ? TEXT("true") : TEXT("false")
 				);
 
-			auto station = Cast<AFGBuildableRailroadStation>(connectedPlatform);
-			if (station)
+			if (AFGBuildableRailroadStation* station = Cast<AFGBuildableRailroadStation>(connectedPlatform))
 			{
 				destinationStations.Add(station);
 
-				MCL_LOG_Display_Condition(
-					TEXT("    Station = "),
-					*station->GetStationIdentifier()->GetStationName().ToString()
-					);
+				if (AFGTrainStationIdentifier* StationIdentifier = station->GetStationIdentifier())
+				{
+					MCL_LOG_Display_Condition(
+						TEXT("    Station = "),
+						*StationIdentifier->GetStationName().ToString()
+						);
+				}
 
 				if (platformConnection == station->GetStationOutputConnection())
 				{
@@ -638,11 +681,15 @@ void UMarcioCommonLibsUtils::getTrainPlatformIndexes(AFGBuildableTrainPlatform* 
 					MCL_LOG_Display_Condition(TEXT("        offset distance = "), -offsetDistance);
 				}
 			}
+
+			UFGTrainPlatformConnection* OppositeConnection = connectedPlatform->GetConnectionInOppositeDirection(platformConnection);
+			platformConnection = IsValid(OppositeConnection) ? OppositeConnection->GetConnectedTo() : nullptr;
+			++offsetDistance;
 		}
 	}
 }
 
 
 #ifndef OPTIMIZE
-#pragma optimize("", on)
+UE_ENABLE_OPTIMIZATION_SHIP
 #endif

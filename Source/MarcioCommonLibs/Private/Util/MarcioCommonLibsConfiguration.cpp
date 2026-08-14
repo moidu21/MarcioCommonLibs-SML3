@@ -3,7 +3,7 @@
 #include "Util/MCLOptimize.h"
 
 #ifndef OPTIMIZE
-#pragma optimize("", off)
+UE_DISABLE_OPTIMIZATION_SHIP
 #endif
 
 FMarcioCommonLibs_ConfigStruct UMarcioCommonLibsConfiguration::configuration;
@@ -20,16 +20,16 @@ void UMarcioCommonLibsConfiguration::SetMarcioCommonLibsConfiguration(const FMar
 	MCL_LOG_Display(TEXT("==="));
 }
 
-void UMarcioCommonLibsConfiguration::GetMarcioCommonLibsConfiguration(int& out_logLevel)
+void UMarcioCommonLibsConfiguration::GetMarcioCommonLibsConfiguration(int32& out_logLevel)
 {
 	out_logLevel = configuration.logLevel;
 }
 
-int UMarcioCommonLibsConfiguration::GetLogLevelMCL()
+int32 UMarcioCommonLibsConfiguration::GetLogLevelMCL()
 {
 	return configuration.logLevel;
 }
 
 #ifndef OPTIMIZE
-#pragma optimize("", on)
+UE_ENABLE_OPTIMIZATION_SHIP
 #endif

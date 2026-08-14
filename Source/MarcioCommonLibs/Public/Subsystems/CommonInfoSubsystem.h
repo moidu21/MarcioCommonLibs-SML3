@@ -45,6 +45,22 @@ public:
 	virtual bool IsStorageTeleporter(AActor* actor, TSubclassOf<AActor> cls = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibs")
+	virtual bool IsItemTeleportEmitter(AActor* actor, TSubclassOf<AActor> cls = nullptr);
+
+	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibs")
+	virtual bool IsItemTeleportReceiver(AActor* actor, TSubclassOf<AActor> cls = nullptr);
+
+	virtual bool TryGetItemTeleportFrequency(AActor* actor, int64& outFrequency) const;
+
+	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibs")
+	virtual bool IsFluidTeleportEmitter(AActor* actor, TSubclassOf<AActor> cls = nullptr);
+
+	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibs")
+	virtual bool IsFluidTeleportReceiver(AActor* actor, TSubclassOf<AActor> cls = nullptr);
+
+	virtual bool TryGetFluidTeleportFrequency(AActor* actor, int64& outFrequency) const;
+
+	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibs")
 	virtual bool IsPowerPole(AActor* actor, TSubclassOf<AActor> cls = nullptr);
 
 	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibs")
@@ -84,10 +100,16 @@ public:
 	virtual bool IsValidBuildable(class AFGBuildable* newBuildable);
 
 	virtual void addTeleporter(class AFGBuildableFactory* teleporter);
+	virtual void addItemTeleportEmitter(class AFGBuildableFactory* emitter);
+	virtual void addItemTeleportReceiver(class AFGBuildableFactory* receiver);
+	virtual void addFluidTeleportEmitter(class AFGBuildableFactory* emitter);
+	virtual void addFluidTeleportReceiver(class AFGBuildableFactory* receiver);
 	virtual void addUndergroundInputBelt(class AFGBuildableStorage* actor);
 
 	UFUNCTION()
 	virtual void removeTeleporter(AActor* teleporter/*, EEndPlayReason::Type reason*/);
+	virtual void removeItemTeleportNode(AActor* node);
+	virtual void removeFluidTeleportNode(AActor* node);
 	UFUNCTION()
 	virtual void removeUndergroundInputBelt(AActor* undergroundInputBelt/*, EEndPlayReason::Type reason*/);
 
@@ -132,10 +154,29 @@ public:
 	UPROPERTY(BlueprintReadWrite, Category="MarcioCommonLibs")
 	TSet<TSubclassOf<class UFGItemDescriptor>> overflowItemDescriptors;
 
-	TSet<class AFGBuildableFactory*> allTeleporters;
-	TSet<class AFGBuildableStorage*> allUndergroundInputBelts;
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<class AFGBuildableFactory>> allTeleporters;
+
+	/** TeleportItem nodes are kept separate from Storage Teleporter nodes because
+	 *  they use an integer frequency instead of the StorageID string. */
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<class AFGBuildableFactory>> allItemTeleportEmitters;
+
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<class AFGBuildableFactory>> allItemTeleportReceivers;
+
+	/** Fluid endpoints use the same integer frequency concept but expose it on
+	 *  their native endpoint component instead of as a Blueprint actor field. */
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<class AFGBuildableFactory>> allFluidTeleportEmitters;
+
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<class AFGBuildableFactory>> allFluidTeleportReceivers;
+
+	UPROPERTY(Transient)
+	TSet<TObjectPtr<class AFGBuildableStorage>> allUndergroundInputBelts;
 
 	// FActorEndPlaySignature::FDelegate removeTeleporterDelegate;
 protected:
-	static ACommonInfoSubsystem* instance;
+	static TWeakObjectPtr<ACommonInfoSubsystem> instance;
 };

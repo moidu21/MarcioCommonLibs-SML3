@@ -2,20 +2,57 @@
 
 #include "Buildables/FGBuildableFactory.h"
 #include "Buildables/FGBuildableStorage.h"
+#include "Components/ActorComponent.h"
 #include "Engine/GameInstance.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "Subsystem/SubsystemActorManager.h"
+#include "UObject/UnrealType.h"
 #include "Util/MarcioCommonLibsConfiguration.h"
 #include "Util/MCLOptimize.h"
 
 #ifndef OPTIMIZE
-#pragma optimize("", off)
+UE_DISABLE_OPTIMIZATION_SHIP
 #endif
 
-ACommonInfoSubsystem* ACommonInfoSubsystem::instance = nullptr;
+TWeakObjectPtr<ACommonInfoSubsystem> ACommonInfoSubsystem::instance;
 
 FCriticalSection ACommonInfoSubsystem::mclCritical;
+
+namespace
+{
+	bool ClassHierarchyContainsPath(const UClass* cls, const TCHAR* pathFragment)
+	{
+		for (const UClass* current = cls; current; current = current->GetSuperClass())
+		{
+			if (current->GetPathName().Contains(pathFragment, ESearchCase::IgnoreCase))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	UActorComponent* FindFluidTeleportEndpoint(AActor* actor)
+	{
+		if (!IsValid(actor))
+		{
+			return nullptr;
+		}
+
+		TInlineComponentArray<UActorComponent*> components(actor);
+		for (UActorComponent* component : components)
+		{
+			if (IsValid(component) && component->GetClass()->GetPathName().Equals(
+				TEXT("/Script/teleportitem.TeleportFluidEndpointComponent"),
+				ESearchCase::IgnoreCase))
+			{
+				return component;
+			}
+		}
+		return nullptr;
+	}
+}
 
 ACommonInfoSubsystem::ACommonInfoSubsystem()
 {
@@ -29,6 +66,12 @@ void ACommonInfoSubsystem::BeginPlay()
 
 void ACommonInfoSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (AFGBuildableSubsystem* BuildableSubsystem = AFGBuildableSubsystem::Get(this))
+	{
+		BuildableSubsystem->mBuildableAddedDelegate.RemoveDynamic(this, &ACommonInfoSubsystem::handleBuildableConstructed);
+		BuildableSubsystem->mBuildableRemovedDelegate.RemoveDynamic(this, &ACommonInfoSubsystem::handleBuildableRemoved);
+	}
+
 	Super::EndPlay(EndPlayReason);
 
 	noneItemDescriptors.Empty();
@@ -52,22 +95,39 @@ void ACommonInfoSubsystem::EndPlay(const EEndPlayReason::Type EndPlayReason)
 	powerTowerClasses.Empty();
 
 	allTeleporters.Empty();
+	allItemTeleportEmitters.Empty();
+	allItemTeleportReceivers.Empty();
+	allFluidTeleportEmitters.Empty();
+	allFluidTeleportReceivers.Empty();
 	allUndergroundInputBelts.Empty();
 
 	initialized = false;
 
-	instance = nullptr;
+	instance.Reset();
 }
 
 ACommonInfoSubsystem* ACommonInfoSubsystem::Get(UWorld* world)
 {
-	USubsystemActorManager* SubsystemActorManager = world->GetSubsystem<USubsystemActorManager>();
+	if (!IsValid(world))
+	{
+		return nullptr;
+	}
 
-	return SubsystemActorManager->GetSubsystemActor<ACommonInfoSubsystem>();
+	if (USubsystemActorManager* SubsystemActorManager = world->GetSubsystem<USubsystemActorManager>())
+	{
+		return SubsystemActorManager->GetSubsystemActor<ACommonInfoSubsystem>();
+	}
+
+	return nullptr;
 }
 
 ACommonInfoSubsystem* ACommonInfoSubsystem::Get(UObject* WorldContextObject)
 {
+	if (!GEngine || !IsValid(WorldContextObject))
+	{
+		return nullptr;
+	}
+
 	return Get(GEngine->GetWorldFromContextObject(WorldContextObject, EGetWorldErrorMode::LogAndReturnNull));
 }
 
@@ -134,10 +194,8 @@ void ACommonInfoSubsystem::Initialize
 
 	if (buildableSubsystem)
 	{
-		buildableSubsystem->mBuildableAddedDelegate.AddDynamic(this, &ACommonInfoSubsystem::handleBuildableConstructed);
-		buildableSubsystem->mBuildableRemovedDelegate.AddDynamic(this, &ACommonInfoSubsystem::handleBuildableRemoved);
-
-		FScopeLock ScopeLock(&mclCritical);
+		buildableSubsystem->mBuildableAddedDelegate.AddUniqueDynamic(this, &ACommonInfoSubsystem::handleBuildableConstructed);
+		buildableSubsystem->mBuildableRemovedDelegate.AddUniqueDynamic(this, &ACommonInfoSubsystem::handleBuildableRemoved);
 
 		TArray<AActor*> allBuildables;
 		UGameplayStatics::GetAllActorsOfClass(buildableSubsystem->GetWorld(), AFGBuildable::StaticClass(), allBuildables);
@@ -192,6 +250,110 @@ bool ACommonInfoSubsystem::IsStorageTeleporter(AActor* actor, TSubclassOf<AActor
 	}
 
 	return cls && baseStorageTeleporterClass && cls->IsChildOf(baseStorageTeleporterClass);
+}
+
+bool ACommonInfoSubsystem::IsItemTeleportEmitter(AActor* actor, TSubclassOf<AActor> cls)
+{
+	if (actor)
+	{
+		cls = actor->GetClass();
+	}
+
+	// Require both the TeleportItem hierarchy and its public frequency property.
+	// A property name alone produced false positives with unrelated modded buildings.
+	return cls &&
+		ClassHierarchyContainsPath(cls, TEXT("/teleportitem/buildteleport.")) &&
+		cls->FindPropertyByName(TEXT("Frequencytransmitter")) != nullptr;
+}
+
+bool ACommonInfoSubsystem::IsItemTeleportReceiver(AActor* actor, TSubclassOf<AActor> cls)
+{
+	if (actor)
+	{
+		cls = actor->GetClass();
+	}
+
+	return cls &&
+		ClassHierarchyContainsPath(cls, TEXT("/teleportitem/receiver.")) &&
+		cls->FindPropertyByName(TEXT("frequencyreceiver")) != nullptr;
+}
+
+bool ACommonInfoSubsystem::TryGetItemTeleportFrequency(AActor* actor, int64& outFrequency) const
+{
+	outFrequency = 0;
+
+	if (!IsValid(actor))
+	{
+		return false;
+	}
+
+	const FName propertyName = actor->GetClass()->FindPropertyByName(TEXT("Frequencytransmitter"))
+		? FName(TEXT("Frequencytransmitter"))
+		: FName(TEXT("frequencyreceiver"));
+	FProperty* property = actor->GetClass()->FindPropertyByName(propertyName);
+
+	if (const FIntProperty* intProperty = CastField<FIntProperty>(property))
+	{
+		outFrequency = intProperty->GetPropertyValue_InContainer(actor);
+		return true;
+	}
+
+	if (const FInt64Property* int64Property = CastField<FInt64Property>(property))
+	{
+		outFrequency = int64Property->GetPropertyValue_InContainer(actor);
+		return true;
+	}
+
+	if (const FByteProperty* byteProperty = CastField<FByteProperty>(property))
+	{
+		outFrequency = byteProperty->GetPropertyValue_InContainer(actor);
+		return true;
+	}
+
+	return false;
+}
+
+bool ACommonInfoSubsystem::IsFluidTeleportEmitter(AActor* actor, TSubclassOf<AActor> cls)
+{
+	if (actor)
+	{
+		cls = actor->GetClass();
+	}
+
+	return cls && ClassHierarchyContainsPath(
+		cls,
+		TEXT("/teleportitem/fluid/teleportfluid."));
+}
+
+bool ACommonInfoSubsystem::IsFluidTeleportReceiver(AActor* actor, TSubclassOf<AActor> cls)
+{
+	if (actor)
+	{
+		cls = actor->GetClass();
+	}
+
+	return cls && ClassHierarchyContainsPath(
+		cls,
+		TEXT("/teleportitem/fluid/receiverfluid."));
+}
+
+bool ACommonInfoSubsystem::TryGetFluidTeleportFrequency(AActor* actor, int64& outFrequency) const
+{
+	outFrequency = 0;
+	UActorComponent* endpoint = FindFluidTeleportEndpoint(actor);
+	if (!endpoint)
+	{
+		return false;
+	}
+
+	if (const FIntProperty* frequencyProperty =
+		FindFProperty<FIntProperty>(endpoint->GetClass(), TEXT("Frequency")))
+	{
+		outFrequency = frequencyProperty->GetPropertyValue_InContainer(endpoint);
+		return true;
+	}
+
+	return false;
 }
 
 bool ACommonInfoSubsystem::IsPowerPole(AActor* actor, TSubclassOf<AActor> cls)
@@ -301,7 +463,43 @@ bool ACommonInfoSubsystem::IsValidBuildable(AFGBuildable* newBuildable)
 		return false;
 	}
 
-	if (IsUndergroundSplitterInput(newBuildable))
+	if (IsItemTeleportEmitter(newBuildable))
+	{
+		if (auto emitter = Cast<AFGBuildableFactory>(newBuildable))
+		{
+			addItemTeleportEmitter(emitter);
+		}
+
+		return true;
+	}
+	else if (IsItemTeleportReceiver(newBuildable))
+	{
+		if (auto receiver = Cast<AFGBuildableFactory>(newBuildable))
+		{
+			addItemTeleportReceiver(receiver);
+		}
+
+		return true;
+	}
+	else if (IsFluidTeleportEmitter(newBuildable))
+	{
+		if (auto emitter = Cast<AFGBuildableFactory>(newBuildable))
+		{
+			addFluidTeleportEmitter(emitter);
+		}
+
+		return true;
+	}
+	else if (IsFluidTeleportReceiver(newBuildable))
+	{
+		if (auto receiver = Cast<AFGBuildableFactory>(newBuildable))
+		{
+			addFluidTeleportReceiver(receiver);
+		}
+
+		return true;
+	}
+	else if (IsUndergroundSplitterInput(newBuildable))
 	{
 		if (auto underGroundBelt = Cast<AFGBuildableStorage>(newBuildable))
 		{
@@ -330,7 +528,15 @@ void ACommonInfoSubsystem::handleBuildableRemoved(AFGBuildable* buildable)
 		return;
 	}
 
-	if (IsUndergroundSplitterInput(buildable))
+	if (IsItemTeleportEmitter(buildable) || IsItemTeleportReceiver(buildable))
+	{
+		removeItemTeleportNode(buildable);
+	}
+	else if (IsFluidTeleportEmitter(buildable) || IsFluidTeleportReceiver(buildable))
+	{
+		removeFluidTeleportNode(buildable);
+	}
+	else if (IsUndergroundSplitterInput(buildable))
 	{
 		if (auto underGroundBelt = Cast<AFGBuildableStorage>(buildable))
 		{
@@ -366,6 +572,46 @@ void ACommonInfoSubsystem::removeTeleporter(AActor* teleporter/*, EEndPlayReason
 	// teleporter->OnEndPlay.RemoveDynamic(this, &ACommonInfoSubsystem::removeTeleporter);
 }
 
+void ACommonInfoSubsystem::addItemTeleportEmitter(AFGBuildableFactory* emitter)
+{
+	FScopeLock ScopeLock(&mclCritical);
+	allItemTeleportEmitters.Add(emitter);
+}
+
+void ACommonInfoSubsystem::addItemTeleportReceiver(AFGBuildableFactory* receiver)
+{
+	FScopeLock ScopeLock(&mclCritical);
+	allItemTeleportReceivers.Add(receiver);
+}
+
+void ACommonInfoSubsystem::removeItemTeleportNode(AActor* node)
+{
+	FScopeLock ScopeLock(&mclCritical);
+	AFGBuildableFactory* buildable = Cast<AFGBuildableFactory>(node);
+	allItemTeleportEmitters.Remove(buildable);
+	allItemTeleportReceivers.Remove(buildable);
+}
+
+void ACommonInfoSubsystem::addFluidTeleportEmitter(AFGBuildableFactory* emitter)
+{
+	FScopeLock ScopeLock(&mclCritical);
+	allFluidTeleportEmitters.Add(emitter);
+}
+
+void ACommonInfoSubsystem::addFluidTeleportReceiver(AFGBuildableFactory* receiver)
+{
+	FScopeLock ScopeLock(&mclCritical);
+	allFluidTeleportReceivers.Add(receiver);
+}
+
+void ACommonInfoSubsystem::removeFluidTeleportNode(AActor* node)
+{
+	FScopeLock ScopeLock(&mclCritical);
+	AFGBuildableFactory* buildable = Cast<AFGBuildableFactory>(node);
+	allFluidTeleportEmitters.Remove(buildable);
+	allFluidTeleportReceivers.Remove(buildable);
+}
+
 void ACommonInfoSubsystem::addUndergroundInputBelt(AFGBuildableStorage* undergroundInputBelt)
 {
 	FScopeLock ScopeLock(&ACommonInfoSubsystem::mclCritical);
@@ -387,5 +633,5 @@ void ACommonInfoSubsystem::removeUndergroundInputBelt(AActor* undergroundInputBe
 }
 
 #ifndef OPTIMIZE
-#pragma optimize("", on)
+UE_ENABLE_OPTIMIZATION_SHIP
 #endif

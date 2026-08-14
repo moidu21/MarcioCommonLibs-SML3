@@ -1,6 +1,5 @@
 ﻿#pragma once
 
-
 #include "GameFramework/Actor.h"
 #include "Engine/GameInstance.h"
 #include "MarcioCommonLibs_ConfigStruct.h"
@@ -22,11 +21,11 @@ public:
 	UFUNCTION(BlueprintCallable, Category="MarcioCommonLibsConfiguration")
 	static void GetMarcioCommonLibsConfiguration
 	(
-		UPARAM(DisplayName = "Log Level") int& out_logLevel
+		UPARAM(DisplayName = "Log Level") int32& out_logLevel
 	);
 
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "MarcioCommonLibsConfiguration")
-	static int GetLogLevelMCL();
+	static int32 GetLogLevelMCL();
 
 public:
 	static FMarcioCommonLibs_ConfigStruct configuration;
