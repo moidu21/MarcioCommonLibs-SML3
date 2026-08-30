@@ -1,8 +1,8 @@
 {
 	"FileVersion": 3,
 	"Version": 1,
-	"VersionName": "1.3.21",
-	"SemVersion": "1.3.21",
+	"VersionName": "1.3.13",
+	"SemVersion": "1.3.13",
 	"GameVersion": ">=502094",
 	"FriendlyName": "MarcioCommonLibs",
 	"Description": "Common libs",
@@ -35,5 +35,5 @@
 			"Enabled": true
 		}
 	],
-	"RemoteVersionRange": "1.3.21"
+	"RemoteVersionRange": "1.3.13"
 }
